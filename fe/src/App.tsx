@@ -162,6 +162,8 @@ export default function App() {
               setSelectedTicketId(id);
               setView('status');
             }}
+            hospitals={hospitals}
+            onRefreshHospitals={fetchHospitals}
           />
         )}
       </div>

@@ -90,6 +90,32 @@ async function seedDatabase() {
       }
     }
 
+    // Seed default receptionists
+    const receptionistsCol = collection(db, 'receptionists');
+    const receptionistsDocs = await getDocs(receptionistsCol);
+    if (receptionistsDocs.empty) {
+      console.log('Seeding default receptionists to Firestore...');
+      const defaultReceptionists = [
+        {
+          id: 'recep-1',
+          name: 'Jane Foster',
+          username: 'jane',
+          password: '123',
+          hospitalId: 'st-jude'
+        },
+        {
+          id: 'recep-2',
+          name: 'Alice Smith',
+          username: 'alice',
+          password: '123',
+          hospitalId: 'heritage'
+        }
+      ];
+      for (const recep of defaultReceptionists) {
+        await setDoc(doc(db, 'receptionists', recep.id), recep);
+      }
+    }
+
     const ticketsCol = collection(db, 'tickets');
     const ticketsDocs = await getDocs(ticketsCol);
     
@@ -190,12 +216,18 @@ app.get('/api/hospitals', async (req, res) => {
   }
 });
 
-// 2. Get all tickets
+// 2. Get all tickets (supports filtering by hospitalId)
 app.get('/api/tickets', async (req, res) => {
   try {
+    const { hospitalId } = req.query;
     const ticketsCol = collection(db, 'tickets');
     const ticketsDocs = await getDocs(ticketsCol);
-    const ticketsList = ticketsDocs.docs.map(doc => doc.data());
+    let ticketsList = ticketsDocs.docs.map(doc => doc.data());
+    
+    if (hospitalId) {
+      ticketsList = ticketsList.filter(t => t.hospitalId === hospitalId);
+    }
+
     // Sort tickets: Called first, then Waiting, then completed/cancelled.
     // Also sorted by joinedAt.
     ticketsList.sort((a, b) => {
@@ -361,16 +393,22 @@ app.post('/api/tickets/reset', async (req, res) => {
   }
 });
 
-// 7. Get receptionist dashboard stats
+// 7. Get receptionist dashboard stats (supports filtering by hospitalId)
 app.get('/api/stats', async (req, res) => {
   try {
+    const { hospitalId } = req.query;
     const ticketsCol = collection(db, 'tickets');
     const ticketsDocs = await getDocs(ticketsCol);
-    const tickets = ticketsDocs.docs.map(doc => doc.data());
+    let tickets = ticketsDocs.docs.map(doc => doc.data());
 
-    const totalToday = tickets.length + 124; // offset for realism, matching 128 from screenshot
-    const onlineBookings = tickets.filter(t => t.type === 'Online').length + 81; // matching 84
-    const walkins = tickets.filter(t => t.type === 'Walk-in').length + 42; // matching 44
+    if (hospitalId) {
+      tickets = tickets.filter(t => t.hospitalId === hospitalId);
+    }
+
+    const isMockHospital = !hospitalId || ['st-jude', 'heritage', 'pacific', 'city-general'].includes(hospitalId as string);
+    const totalToday = tickets.length + (isMockHospital ? 124 : 0);
+    const onlineBookings = tickets.filter(t => t.type === 'Online').length + (isMockHospital ? 81 : 0);
+    const walkins = tickets.filter(t => t.type === 'Walk-in').length + (isMockHospital ? 42 : 0);
     
     // Avg wait calculation
     let totalWait = 0;
@@ -381,13 +419,120 @@ app.get('/api/stats', async (req, res) => {
         counted++;
       }
     });
-    const avgWaitTime = counted > 0 ? Math.round(totalWait / counted) : 18;
+    const avgWaitTime = counted > 0 ? Math.round(totalWait / counted) : (isMockHospital ? 18 : 5);
 
     res.json({
       todayTotal: totalToday,
       onlineBookings,
       walkins,
       avgWaitTime
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 8. Onboard/Create new hospital
+app.post('/api/hospitals', async (req, res) => {
+  try {
+    const { 
+      name, 
+      address, 
+      description, 
+      consultationFee, 
+      availableDocs, 
+      image,
+      badge
+    } = req.body;
+
+    if (!name || !address) {
+      return res.status(400).json({ error: 'Missing required hospital fields (name, address)' });
+    }
+
+    // Generate unique id for hospital based on name
+    const hospitalId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now();
+    
+    const newHospital = {
+      id: hospitalId,
+      name,
+      address,
+      distance: 'Local Facility',
+      rating: 5.0,
+      liveQueueWait: 5,
+      consultationFee: Number(consultationFee) || 30,
+      badge: badge || 'New Partner',
+      availableDocs: Number(availableDocs) || 1,
+      description: description || 'Newly onboarded clinic utilizing Hospira.',
+      image: image || 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?auto=format&fit=crop&q=80&w=600'
+    };
+
+    await setDoc(doc(db, 'hospitals', hospitalId), newHospital);
+    res.status(201).json(newHospital);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 9. Onboard/Register new receptionist
+app.post('/api/receptionists', async (req, res) => {
+  try {
+    const { name, username, password, hospitalId } = req.body;
+    if (!name || !username || !password || !hospitalId) {
+      return res.status(400).json({ error: 'Missing required receptionist fields' });
+    }
+
+    const receptionistsCol = collection(db, 'receptionists');
+    const q = query(receptionistsCol, where('username', '==', username));
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    const receptionistId = `recep-${Date.now()}`;
+    const newReceptionist = {
+      id: receptionistId,
+      name,
+      username,
+      password,
+      hospitalId
+    };
+
+    await setDoc(doc(db, 'receptionists', receptionistId), newReceptionist);
+    res.status(201).json({ id: receptionistId, name, username, hospitalId });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10. Receptionist Login
+app.post('/api/receptionists/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    const receptionistsCol = collection(db, 'receptionists');
+    const q = query(receptionistsCol, where('username', '==', username), where('password', '==', password));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const recepDoc = querySnapshot.docs[0];
+    const recepData = recepDoc.data();
+    
+    // Get hospital details
+    const hospitalDoc = await getDoc(doc(db, 'hospitals', recepData.hospitalId));
+    const hospitalName = hospitalDoc.exists() ? hospitalDoc.data()?.name : 'Partner Hospital';
+
+    res.json({
+      id: recepData.id,
+      name: recepData.name,
+      username: recepData.username,
+      hospitalId: recepData.hospitalId,
+      hospitalName
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
