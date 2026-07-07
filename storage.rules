@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// Hospira Firebase Storage security rules.
+// Deploy with: firebase deploy --only storage
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Patient-uploaded visit documents. Reads are public (download links are
+    // shown on the live tracker); anyone registering may upload up to 10MB
+    // image/PDF files under the tickets/ prefix.
+    match /tickets/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+  }
+}

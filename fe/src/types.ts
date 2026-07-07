@@ -12,9 +12,27 @@ export interface Hospital {
   image: string;
 }
 
-export type TicketStatus = 'Waiting' | 'Called' | 'Completed' | 'Cancelled';
+export type TicketStatus = 'Waiting' | 'Urgent' | 'Called' | 'Completed' | 'Cancelled';
 export type TicketSeverity = 'Mild' | 'Moderate' | 'Severe' | 'Critical';
 export type TicketType = 'Walk-in' | 'Online';
+
+export interface MedicalHistory {
+  diabetes: boolean;
+  highBP: boolean;
+  asthma: boolean;
+  allergies: boolean;
+  heartCondition: boolean;
+  surgeries: boolean;
+  otherConditions: string;
+}
+
+export interface UploadedDoc {
+  name: string;
+  size: string;
+  type: string;
+  url: string;
+  storagePath: string;
+}
 
 export interface Ticket {
   id: string;
@@ -32,6 +50,10 @@ export interface Ticket {
   department: string;
   hospitalId: string;
   hospitalName: string;
+  medicalHistory?: MedicalHistory;
+  documents?: UploadedDoc[];
+  calledAt?: string;
+  completedAt?: string;
 }
 
 export interface Specialty {
@@ -39,4 +61,19 @@ export interface Specialty {
   name: string;
   icon: string;
   colorClass: string;
+}
+
+export interface Receptionist {
+  id: string;
+  name: string;
+  username: string;
+  hospitalId: string;
+  hospitalName: string;
+}
+
+export interface DashboardStats {
+  todayTotal: number;
+  onlineBookings: number;
+  walkins: number;
+  avgWaitTime: number;
 }

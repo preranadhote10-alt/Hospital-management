@@ -1,53 +1,75 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Search, 
-  Bell, 
-  User, 
-  LayoutDashboard, 
-  Users, 
-  Calendar, 
-  BarChart3, 
-  Settings, 
-  HelpCircle, 
-  LogOut, 
-  Clock, 
-  Check, 
+import {
+  Search,
+  Bell,
+  User,
+  LayoutDashboard,
+  Users,
+  Calendar,
+  BarChart3,
+  Settings,
+  HelpCircle,
+  LogOut,
+  Clock,
+  Check,
   RefreshCw,
   Plus,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
-import { Ticket, TicketSeverity, Hospital } from '../types';
+import { onAuthStateChanged } from 'firebase/auth';
+import { Ticket, TicketSeverity, Receptionist, DashboardStats } from '../types';
+import { auth } from '../firebase';
+import {
+  getUserProfile,
+  loginStaff,
+  logoutStaff,
+  onboardHospitalAndStaff,
+  subscribeHospitalTickets,
+  updateTicketStatus,
+  createTicket,
+  clearHospitalTickets,
+  computeStats,
+} from '../services';
 
 interface ReceptionDeskProps {
   onBackToHome: () => void;
   onSelectTicket: (ticketId: string) => void;
-  hospitals: Hospital[];
-  onRefreshHospitals: () => void;
 }
 
-export default function ReceptionDesk({ 
-  onBackToHome, 
-  onSelectTicket,
-  hospitals,
-  onRefreshHospitals
-}: ReceptionDeskProps) {
-  // Session state from localStorage to preserve receptionist sign-in
-  const [receptionist, setReceptionist] = useState<{
-    id: string;
-    name: string;
-    username: string;
-    hospitalId: string;
-    hospitalName: string;
-  } | null>(() => {
-    const saved = localStorage.getItem('hospira_receptionist_session');
-    return saved ? JSON.parse(saved) : null;
-  });
+function mapAuthError(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Invalid username or password.';
+    case 'auth/email-already-in-use':
+      return 'That username is already registered.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters.';
+    case 'auth/network-request-failed':
+      return 'Network error. Check your connection and try again.';
+    case 'auth/operation-not-allowed':
+      return 'Email/Password sign-in is not enabled in the Firebase project.';
+    default:
+      return (err as Error)?.message || 'Something went wrong. Please try again.';
+  }
+}
+
+export default function ReceptionDesk({ onBackToHome, onSelectTicket }: ReceptionDeskProps) {
+  const [receptionist, setReceptionist] = useState<Receptionist | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'login' | 'onboard'>('login');
-  
+
   // Dashboard Core State
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [stats, setStats] = useState({ todayTotal: 128, onlineBookings: 84, walkins: 44, avgWaitTime: 18 });
+  const [stats, setStats] = useState<DashboardStats>({
+    todayTotal: 0,
+    onlineBookings: 0,
+    walkins: 0,
+    avgWaitTime: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,7 +88,7 @@ export default function ReceptionDesk({
   const [hospBadge, setHospBadge] = useState('Urgent Care Open');
   const [hospDesc, setHospDesc] = useState('');
   const [selectedImage, setSelectedImage] = useState('https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?auto=format&fit=crop&q=80&w=600');
-  
+
   // Onboard Receptionist Form State
   const [staffName, setStaffName] = useState('');
   const [staffUsername, setStaffUsername] = useState('');
@@ -83,62 +105,52 @@ export default function ReceptionDesk({
   const [isUrgent, setIsUrgent] = useState(false);
   const [registering, setRegistering] = useState(false);
 
-  // 4 Stock hospital images for the onboarding form
   const hospitalBanners = [
-    {
-      name: 'Modern Glass Plaza',
-      url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      name: 'Tech Specialty Wing',
-      url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      name: 'Children\'s Care Center',
-      url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      name: 'Wellness Clinic Interior',
-      url: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&q=80&w=600',
-    }
+    { name: 'Modern Glass Plaza', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?auto=format&fit=crop&q=80&w=600' },
+    { name: 'Tech Specialty Wing', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&q=80&w=600' },
+    { name: "Children's Care Center", url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=600' },
+    { name: 'Wellness Clinic Interior', url: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&q=80&w=600' },
   ];
 
-  // Fetch all tickets and live stats from the Express API scoped by hospitalId
-  const refreshDashboardData = async () => {
-    if (!receptionist) return;
-    try {
-      const urlParams = `?hospitalId=${receptionist.hospitalId}`;
-      const ticketsRes = await fetch(`/api/tickets${urlParams}`);
-      const statsRes = await fetch(`/api/stats${urlParams}`);
-      
-      if (ticketsRes.ok && statsRes.ok) {
-        const ticketsData = await ticketsRes.json();
-        const statsData = await statsRes.json();
-        setTickets(ticketsData);
-        setStats(statsData);
-        setError('');
-      } else {
-        setError('Error synchronizing receptionist database.');
-      }
-    } catch (err) {
-      console.error(err);
-      setError('Connection to Express backend lost.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Poll database for updates only when receptionist is signed in
+  // Restore session from Firebase Auth.
   useEffect(() => {
-    if (receptionist) {
-      setLoading(true);
-      refreshDashboardData();
-      const interval = setInterval(refreshDashboardData, 5000); 
-      return () => clearInterval(interval);
-    }
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const profile = await getUserProfile(user.uid);
+          setReceptionist(profile);
+        } catch {
+          setReceptionist(null);
+        }
+      } else {
+        setReceptionist(null);
+      }
+      setAuthChecking(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // Live queue + stats subscription (real-time) once signed in.
+  useEffect(() => {
+    if (!receptionist) return;
+    setLoading(true);
+    const unsub = subscribeHospitalTickets(
+      receptionist.hospitalId,
+      (list) => {
+        setTickets(list);
+        setStats(computeStats(list));
+        setError('');
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        setError('Error synchronizing receptionist database.');
+        setLoading(false);
+      }
+    );
+    return () => unsub();
   }, [receptionist]);
 
-  // Login handler
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginUsername.trim() || !loginPassword.trim()) {
@@ -148,35 +160,22 @@ export default function ReceptionDesk({
     setLoggingIn(true);
     setLoginError('');
     try {
-      const res = await fetch('/api/receptionists/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUsername, password: loginPassword })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setReceptionist(data);
-        localStorage.setItem('hospira_receptionist_session', JSON.stringify(data));
-      } else {
-        const errData = await res.json();
-        setLoginError(errData.error || 'Invalid credentials.');
-      }
+      const profile = await loginStaff(loginUsername, loginPassword);
+      setReceptionist(profile);
     } catch (err) {
       console.error(err);
-      setLoginError('Could not connect to authentication server.');
+      setLoginError(mapAuthError(err));
     } finally {
       setLoggingIn(false);
     }
   };
 
-  // Logout handler
-  const handleLogout = () => {
-    localStorage.removeItem('hospira_receptionist_session');
+  const handleLogout = async () => {
+    await logoutStaff();
     setReceptionist(null);
     setTickets([]);
   };
 
-  // Onboard Hospital & Receptionist Staff handler
   const handleOnboard = async (e: React.FormEvent) => {
     e.preventDefault();
     setOnboardingError('');
@@ -190,104 +189,55 @@ export default function ReceptionDesk({
       setOnboardingError('Please enter receptionist staff name, username, and password.');
       return;
     }
+    if (staffPassword.length < 6) {
+      setOnboardingError('Staff password must be at least 6 characters.');
+      return;
+    }
 
     setOnboarding(true);
     try {
-      // 1. Onboard the Hospital
-      const hospRes = await fetch('/api/hospitals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: hospName,
-          address: hospAddress,
-          description: hospDesc,
-          consultationFee: Number(hospFee),
-          availableDocs: Number(hospDocs),
-          image: selectedImage,
-          badge: hospBadge
-        })
+      await onboardHospitalAndStaff({
+        name: hospName,
+        address: hospAddress,
+        description: hospDesc,
+        consultationFee: Number(hospFee),
+        availableDocs: Number(hospDocs),
+        image: selectedImage,
+        badge: hospBadge,
+        staffName,
+        staffUsername,
+        staffPassword,
       });
 
-      if (!hospRes.ok) {
-        const errData = await hospRes.json();
-        throw new Error(errData.error || 'Failed to onboard hospital.');
-      }
+      setOnboardingSuccess('Hospital and receptionist onboarded successfully! Signing you in...');
 
-      const createdHospital = await hospRes.json();
+      // Auto-login the newly onboarded receptionist on the primary app.
+      const profile = await loginStaff(staffUsername, staffPassword);
 
-      // 2. Onboard the Receptionist account
-      const recepRes = await fetch('/api/receptionists', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: staffName,
-          username: staffUsername,
-          password: staffPassword,
-          hospitalId: createdHospital.id
-        })
-      });
-
-      if (!recepRes.ok) {
-        const errData = await recepRes.json();
-        throw new Error(errData.error || 'Hospital registered, but staff account creation failed.');
-      }
-
-      const createdRecep = await recepRes.json();
-
-      // Refresh list of hospitals globally so patients can join it
-      onRefreshHospitals();
-
-      setOnboardingSuccess('Hospital and receptionist onboarded successfully!');
-      
-      // Auto-login the newly onboarded receptionist
-      const session = {
-        id: createdRecep.id,
-        name: createdRecep.name,
-        username: createdRecep.username,
-        hospitalId: createdRecep.hospitalId,
-        hospitalName: createdHospital.name
-      };
-      
-      setTimeout(() => {
-        setReceptionist(session);
-        localStorage.setItem('hospira_receptionist_session', JSON.stringify(session));
-        // Reset forms
-        setHospName('');
-        setHospAddress('');
-        setHospDesc('');
-        setStaffName('');
-        setStaffUsername('');
-        setStaffPassword('');
-      }, 1000);
-
+      setHospName('');
+      setHospAddress('');
+      setHospDesc('');
+      setStaffName('');
+      setStaffUsername('');
+      setStaffPassword('');
+      setReceptionist(profile);
     } catch (err: any) {
       console.error(err);
-      setOnboardingError(err.message || 'Error occurred during hospital onboarding.');
+      setOnboardingError(mapAuthError(err));
     } finally {
       setOnboarding(false);
     }
   };
 
-  // Update a Ticket's Status (e.g. Call, Complete, Cancel)
-  const updateTicketStatus = async (ticketId: string, status: string) => {
+  const handleUpdateStatus = async (ticketId: string, status: Ticket['status']) => {
     try {
-      const response = await fetch(`/api/tickets/${ticketId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      if (response.ok) {
-        await refreshDashboardData();
-      } else {
-        alert('Could not update patient status.');
-      }
+      await updateTicketStatus(ticketId, status);
     } catch (err) {
       console.error(err);
-      alert('Error updating status.');
+      alert('Could not update patient status.');
     }
   };
 
-  // Quick Register Walk-in Patient specifically bound to logged-in receptionist's hospital
   const handleQuickRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walkinName.trim() || !walkinPhone.trim() || !receptionist) {
@@ -297,10 +247,10 @@ export default function ReceptionDesk({
 
     setRegistering(true);
     try {
-      const payload = {
+      await createTicket({
         fullName: walkinName,
         phone: walkinPhone,
-        age: 35, 
+        age: 35,
         gender: 'Not Specified',
         symptoms: walkinReason,
         severity: (isUrgent ? 'Critical' : 'Mild') as TicketSeverity,
@@ -308,64 +258,60 @@ export default function ReceptionDesk({
         reason: isUrgent ? 'Emergency / Urgent Care' : walkinReason,
         department: walkinDept,
         hospitalId: receptionist.hospitalId,
-        hospitalName: receptionist.hospitalName
-      };
-
-      const response = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        hospitalName: receptionist.hospitalName,
       });
 
-      if (response.ok) {
-        setWalkinName('');
-        setWalkinPhone('');
-        setIsUrgent(false);
-        setWalkinReason('General Consultation');
-        await refreshDashboardData();
-        alert('Walk-in patient added to active queue successfully.');
-      } else {
-        alert('Could not register walk-in patient.');
-      }
+      setWalkinName('');
+      setWalkinPhone('');
+      setIsUrgent(false);
+      setWalkinReason('General Consultation');
+      alert('Walk-in patient added to active queue successfully.');
     } catch (err) {
       console.error(err);
-      alert('Network error registering walk-in.');
+      alert('Could not register walk-in patient.');
     } finally {
       setRegistering(false);
     }
   };
 
-  // Reset and reseed tickets
   const handleResetQueue = async () => {
-    if (!window.confirm('Do you want to reset the patient queue back to original mock states?')) return;
+    if (!receptionist) return;
+    if (!window.confirm('Clear all patient tickets for your hospital and reset token numbers?')) return;
     try {
-      const response = await fetch('/api/tickets/reset', { method: 'POST' });
-      if (response.ok) {
-        await refreshDashboardData();
-        alert('Queue database reset and re-seeded successfully.');
-      }
+      await clearHospitalTickets(receptionist.hospitalId);
+      alert('Queue cleared successfully for your hospital.');
     } catch (err) {
       console.error(err);
+      alert('Could not clear the queue.');
     }
   };
 
-  // Filter tickets by search query
-  const filteredTickets = tickets.filter(t => 
-    t.fullName.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    t.token.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.department.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredTickets = tickets.filter(
+    (t) =>
+      t.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.token.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.department.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  /* While Firebase determines auth state, show a lightweight loader */
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-8">
+        <div className="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   /* Render LOGIN / ONBOARD PORTAL if no receptionist session is active */
   if (!receptionist) {
     return (
       <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center py-12 px-6">
         <div className="w-full max-w-4xl bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[600px]">
-          
+
           {/* Left branding panel */}
           <div className="md:w-5/12 bg-slate-900 text-white p-8 flex flex-col justify-between relative overflow-hidden shrink-0">
             <div className="absolute -right-16 -bottom-16 w-64 h-64 bg-blue-600/10 rounded-full blur-2xl"></div>
-            
+
             <div className="relative z-10 space-y-6">
               <span className="text-2xl font-bold tracking-tight text-blue-500 cursor-pointer" onClick={onBackToHome}>
                 Hospira
@@ -384,8 +330,8 @@ export default function ReceptionDesk({
                   <Check size={12} />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-200">Zero-Delay Onboarding</p>
-                  <p className="text-[10px] text-slate-400">Instantly register clinic branches in our patient network.</p>
+                  <p className="text-xs font-bold text-slate-200">Firebase-Powered Auth</p>
+                  <p className="text-[10px] text-slate-400">Secure receptionist accounts backed by Firebase Authentication.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -394,7 +340,7 @@ export default function ReceptionDesk({
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-200">Dynamic Triage Queue</p>
-                  <p className="text-[10px] text-slate-400">Receptionist dashboards filtered specifically for your facility.</p>
+                  <p className="text-[10px] text-slate-400">Real-time dashboards filtered specifically for your facility.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -403,7 +349,7 @@ export default function ReceptionDesk({
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-200">Pre-seeded Credentials</p>
-                  <p className="text-[10px] text-slate-400 font-semibold text-blue-400">Username: jane / Password: 123 (St. Jude)</p>
+                  <p className="text-[10px] font-semibold text-blue-400">Username: jane / Password: hospira123 (St. Jude)</p>
                 </div>
               </div>
             </div>
@@ -421,8 +367,8 @@ export default function ReceptionDesk({
                 <button
                   onClick={() => setActiveTab('login')}
                   className={`flex-1 pb-3 text-center text-xs font-bold transition-all relative cursor-pointer ${
-                    activeTab === 'login' 
-                      ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold' 
+                    activeTab === 'login'
+                      ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold'
                       : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
@@ -431,8 +377,8 @@ export default function ReceptionDesk({
                 <button
                   onClick={() => setActiveTab('onboard')}
                   className={`flex-1 pb-3 text-center text-xs font-bold transition-all relative cursor-pointer ${
-                    activeTab === 'onboard' 
-                      ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold' 
+                    activeTab === 'onboard'
+                      ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold'
                       : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
@@ -463,7 +409,6 @@ export default function ReceptionDesk({
                       onChange={(e) => setLoginUsername(e.target.value)}
                       placeholder="e.g. jane"
                       className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                      required
                     />
                   </div>
 
@@ -473,9 +418,8 @@ export default function ReceptionDesk({
                       type="password"
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="e.g. 123"
+                      placeholder="e.g. hospira123"
                       className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                      required
                     />
                   </div>
 
@@ -495,12 +439,12 @@ export default function ReceptionDesk({
                       <div>
                         <span className="font-bold">St. Jude:</span>
                         <div className="mt-0.5">User: <code className="bg-blue-100/80 px-1 py-0.5 rounded">jane</code></div>
-                        <div>Pass: <code className="bg-blue-100/80 px-1 py-0.5 rounded">123</code></div>
+                        <div>Pass: <code className="bg-blue-100/80 px-1 py-0.5 rounded">hospira123</code></div>
                       </div>
                       <div>
                         <span className="font-bold">Heritage Health:</span>
                         <div className="mt-0.5">User: <code className="bg-blue-100/80 px-1 py-0.5 rounded">alice</code></div>
-                        <div>Pass: <code className="bg-blue-100/80 px-1 py-0.5 rounded">123</code></div>
+                        <div>Pass: <code className="bg-blue-100/80 px-1 py-0.5 rounded">hospira123</code></div>
                       </div>
                     </div>
                   </div>
@@ -530,7 +474,7 @@ export default function ReceptionDesk({
                   {/* Section 1: Hospital Details */}
                   <div className="space-y-3 border-b border-slate-100 pb-4">
                     <h4 className="text-[10px] uppercase font-bold tracking-wider text-blue-600">Step 1: Hospital Details</h4>
-                    
+
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Hospital Name *</label>
                       <input
@@ -539,7 +483,6 @@ export default function ReceptionDesk({
                         onChange={(e) => setHospName(e.target.value)}
                         placeholder="e.g. Grace Memorial Hospital"
                         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                        required
                       />
                     </div>
 
@@ -551,7 +494,6 @@ export default function ReceptionDesk({
                         onChange={(e) => setHospAddress(e.target.value)}
                         placeholder="e.g. 402 Medical Row, Sector 4"
                         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                        required
                       />
                     </div>
 
@@ -564,7 +506,6 @@ export default function ReceptionDesk({
                           onChange={(e) => setHospFee(e.target.value)}
                           placeholder="e.g. 35"
                           className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                          required
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -575,7 +516,6 @@ export default function ReceptionDesk({
                           onChange={(e) => setHospDocs(e.target.value)}
                           placeholder="e.g. 5"
                           className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                          required
                         />
                       </div>
                     </div>
@@ -613,8 +553,8 @@ export default function ReceptionDesk({
                             type="button"
                             onClick={() => setSelectedImage(banner.url)}
                             className={`p-1.5 border rounded-lg text-left text-[10px] font-semibold transition-all cursor-pointer flex items-center gap-2 ${
-                              selectedImage === banner.url 
-                                ? 'bg-blue-50 border-blue-500 text-blue-700' 
+                              selectedImage === banner.url
+                                ? 'bg-blue-50 border-blue-500 text-blue-700'
                                 : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                             }`}
                           >
@@ -629,7 +569,7 @@ export default function ReceptionDesk({
                   {/* Section 2: Receptionist Account */}
                   <div className="space-y-3 pt-1">
                     <h4 className="text-[10px] uppercase font-bold tracking-wider text-blue-600">Step 2: Create Primary Receptionist Account</h4>
-                    
+
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Staff Full Name *</label>
                       <input
@@ -638,7 +578,6 @@ export default function ReceptionDesk({
                         onChange={(e) => setStaffName(e.target.value)}
                         placeholder="e.g. Sarah Connor"
                         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                        required
                       />
                     </div>
 
@@ -651,18 +590,16 @@ export default function ReceptionDesk({
                           onChange={(e) => setStaffUsername(e.target.value)}
                           placeholder="e.g. sarah"
                           className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                          required
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Password *</label>
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Password * (min 6)</label>
                         <input
                           type="password"
                           value={staffPassword}
                           onChange={(e) => setStaffPassword(e.target.value)}
-                          placeholder="e.g. 123"
+                          placeholder="min. 6 characters"
                           className="w-full h-9 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                          required
                         />
                       </div>
                     </div>
@@ -690,11 +627,10 @@ export default function ReceptionDesk({
   /* Render main dashboard if logged in */
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col md:flex-row">
-      
+
       {/* Side Navigation Panel */}
       <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0">
         <div>
-          {/* Logo Brand */}
           <div className="p-6 border-b border-slate-100">
             <span className="text-xl font-bold text-blue-600 tracking-tight cursor-pointer" onClick={onBackToHome}>
               Hospira
@@ -702,7 +638,6 @@ export default function ReceptionDesk({
             <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider mt-1">RECEPTION DESK</p>
           </div>
 
-          {/* Menu Items */}
           <nav className="p-4 space-y-1">
             {[
               { label: 'Live Queue', icon: <LayoutDashboard size={14} />, active: true },
@@ -712,13 +647,11 @@ export default function ReceptionDesk({
               { label: 'Configuration', icon: <Settings size={14} /> },
               { label: 'Help Center', icon: <HelpCircle size={14} /> },
             ].map((item) => (
-              <button 
+              <button
                 key={item.label}
-                onClick={() => { if (!item.active) alert(`${item.label} view is mock-only. Use the Live Queue view.`) }}
+                onClick={() => { if (!item.active) alert(`${item.label} view is not part of this build. Use the Live Queue view.`); }}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  item.active 
-                    ? 'bg-blue-50 text-blue-600' 
-                    : 'text-slate-600 hover:bg-slate-50'
+                  item.active ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 {item.icon}
@@ -728,18 +661,17 @@ export default function ReceptionDesk({
           </nav>
         </div>
 
-        {/* User logout section */}
         <div className="p-4 border-t border-slate-100 space-y-3">
           <div className="bg-slate-50 p-3 rounded-lg flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
-              {receptionist.name ? receptionist.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'ST'}
+              {receptionist.name ? receptionist.name.split(' ').map((n) => n[0]).join('').toUpperCase().substring(0, 2) : 'ST'}
             </div>
             <div className="overflow-hidden">
               <p className="text-xs font-bold text-slate-800 truncate" title={receptionist.name}>{receptionist.name}</p>
               <p className="text-[9px] text-slate-400 truncate" title={receptionist.hospitalName}>{receptionist.hospitalName}</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors text-xs font-semibold text-slate-500 cursor-pointer"
           >
@@ -750,13 +682,12 @@ export default function ReceptionDesk({
 
       {/* Main Content Pane */}
       <main className="flex-1 flex flex-col overflow-y-auto">
-        
-        {/* Top Header */}
+
         <header className="bg-white border-b border-slate-200 px-8 py-3 flex flex-col sm:flex-row justify-between items-center gap-4 sticky top-0 z-40">
           <div className="relative w-full sm:w-80">
             <Search className="absolute left-3 top-3 text-slate-400" size={14} />
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full h-9 pl-9 pr-4 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 bg-slate-50 text-slate-800"
@@ -764,12 +695,12 @@ export default function ReceptionDesk({
             />
           </div>
           <div className="flex items-center gap-4 shrink-0">
-            <button 
-              onClick={handleResetQueue} 
+            <button
+              onClick={handleResetQueue}
               className="px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-600 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Reset Database to Default Seed"
+              title="Clear all tickets for your hospital"
             >
-              <RefreshCw size={10} /> Seed Defaults
+              <RefreshCw size={10} /> Clear Queue
             </button>
             <span className="bg-red-600 text-white px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wider">Emergency</span>
             <div className="flex gap-2">
@@ -779,19 +710,17 @@ export default function ReceptionDesk({
           </div>
         </header>
 
-        {/* Inner Content Grid */}
         <div className="p-6 md:p-8 space-y-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          {/* Main Dashboard Section */}
+
           <div className="lg:col-span-8 space-y-8">
-            
+
             {/* KPI Statistics Row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { label: "Today's Patients", value: stats.todayTotal, icon: <Users size={14} />, color: "text-blue-600" },
-                { label: "Online Bookings", value: stats.onlineBookings, icon: <LayoutDashboard size={14} />, color: "text-slate-500" },
-                { label: "Walk-ins", value: stats.walkins, icon: <Plus size={14} />, color: "text-purple-600" },
-                { label: "Avg Wait Time", value: `${stats.avgWaitTime} min`, icon: <Clock size={14} />, color: "text-green-600" }
+                { label: "Today's Patients", value: stats.todayTotal, icon: <Users size={14} />, color: 'text-blue-600' },
+                { label: 'Online Bookings', value: stats.onlineBookings, icon: <LayoutDashboard size={14} />, color: 'text-slate-500' },
+                { label: 'Walk-ins', value: stats.walkins, icon: <Plus size={14} />, color: 'text-purple-600' },
+                { label: 'Avg Wait Time', value: `${stats.avgWaitTime} min`, icon: <Clock size={14} />, color: 'text-green-600' },
               ].map((stat, idx) => (
                 <div key={idx} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm relative overflow-hidden flex flex-col justify-between h-24">
                   <div className="flex justify-between items-start text-slate-400">
@@ -803,16 +732,16 @@ export default function ReceptionDesk({
               ))}
             </div>
 
-            {/* Live Queue Tables list */}
+            {/* Live Queue Table */}
             <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                 <div>
                   <h2 className="text-base font-bold text-slate-900">Active Patient Queue</h2>
                   <p className="text-xs text-slate-400 mt-0.5">Real-time walk-in and remote triage register for <span className="font-semibold text-blue-600">{receptionist.hospitalName}</span></p>
                 </div>
-                <button onClick={refreshDashboardData} className="text-xs text-blue-600 font-semibold flex items-center gap-1 hover:underline cursor-pointer">
-                  <RefreshCw size={12} /> Sync Database
-                </button>
+                <span className="text-xs text-green-600 font-semibold flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> Live
+                </span>
               </div>
 
               <div className="overflow-x-auto">
@@ -846,10 +775,10 @@ export default function ReceptionDesk({
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-bold border ${
-                            t.status === 'Urgent' 
-                              ? 'bg-red-50 text-red-600 border-red-100' 
-                              : t.status === 'Called' 
-                                ? 'bg-blue-50 text-blue-600 border-blue-100' 
+                            t.status === 'Urgent'
+                              ? 'bg-red-50 text-red-600 border-red-100'
+                              : t.status === 'Called'
+                                ? 'bg-blue-50 text-blue-600 border-blue-100'
                                 : t.status === 'Completed'
                                   ? 'bg-green-50 text-green-700 border-green-100'
                                   : 'bg-slate-50 text-slate-500 border-slate-100'
@@ -864,23 +793,23 @@ export default function ReceptionDesk({
                           {t.status !== 'Completed' && t.status !== 'Cancelled' && (
                             <>
                               {t.status !== 'Called' && (
-                                <button 
-                                  onClick={() => updateTicketStatus(t.id, 'Called')}
+                                <button
+                                  onClick={() => handleUpdateStatus(t.id, 'Called')}
                                   className="bg-blue-600 text-white px-3 py-1 rounded-md font-semibold text-xs hover:bg-blue-700 transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0"
                                 >
                                   Call
                                 </button>
                               )}
-                              <button 
-                                onClick={() => updateTicketStatus(t.id, 'Completed')}
+                              <button
+                                onClick={() => handleUpdateStatus(t.id, 'Completed')}
                                 className="bg-green-50 text-green-700 border border-green-200 px-3 py-1 rounded-md font-semibold text-xs hover:bg-green-100/50 transition-all cursor-pointer whitespace-nowrap shrink-0"
                               >
                                 Done
                               </button>
                             </>
                           )}
-                          <button 
-                            onClick={() => updateTicketStatus(t.id, 'Cancelled')}
+                          <button
+                            onClick={() => handleUpdateStatus(t.id, 'Cancelled')}
                             className="bg-slate-50 text-red-600 p-1.5 rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-200 transition-colors cursor-pointer inline-flex items-center shrink-0 ml-1"
                             title="Cancel Ticket"
                           >
@@ -894,13 +823,16 @@ export default function ReceptionDesk({
                     {filteredTickets.length === 0 && (
                       <tr>
                         <td colSpan={6} className="px-6 py-12 text-center text-slate-400 text-xs font-medium">
-                          No active patient tickets in the queue for your hospital right now.
+                          {loading ? 'Loading live queue...' : 'No active patient tickets in the queue for your hospital right now.'}
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
+              {error && (
+                <div className="px-6 py-3 bg-red-50 text-red-600 text-xs font-semibold border-t border-red-100">{error}</div>
+              )}
             </section>
           </div>
 
@@ -914,32 +846,30 @@ export default function ReceptionDesk({
             <form onSubmit={handleQuickRegister} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Patient Full Name *</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={walkinName}
                   onChange={(e) => setWalkinName(e.target.value)}
                   placeholder="e.g. Elena Martinez"
                   className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                  required
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Phone Number *</label>
-                <input 
-                  type="tel" 
+                <input
+                  type="tel"
                   value={walkinPhone}
                   onChange={(e) => setWalkinPhone(e.target.value)}
                   placeholder="+1 (555) 019-3829"
                   className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
-                  required
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Appointment Reason</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={walkinReason}
                   onChange={(e) => setWalkinReason(e.target.value)}
                   placeholder="Chest pain, Consultation, Orthopedics..."
@@ -956,8 +886,8 @@ export default function ReceptionDesk({
                       type="button"
                       onClick={() => setWalkinDept(dept)}
                       className={`py-1.5 px-2.5 border rounded-lg text-[9px] font-bold transition-colors cursor-pointer ${
-                        walkinDept === dept 
-                          ? 'bg-blue-50 text-blue-600 border-blue-200 font-extrabold' 
+                        walkinDept === dept
+                          ? 'bg-blue-50 text-blue-600 border-blue-200 font-extrabold'
                           : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                       }`}
                     >
@@ -968,8 +898,8 @@ export default function ReceptionDesk({
               </div>
 
               <label className="flex items-center gap-2 pt-2 cursor-pointer select-none">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={isUrgent}
                   onChange={(e) => setIsUrgent(e.target.checked)}
                   className="w-4 h-4 text-red-600 border-slate-200 rounded focus:ring-red-500 cursor-pointer shrink-0"
@@ -979,7 +909,7 @@ export default function ReceptionDesk({
                 </span>
               </label>
 
-              <button 
+              <button
                 type="submit"
                 disabled={registering}
                 className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-bold text-xs hover:bg-blue-700 transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
@@ -988,7 +918,6 @@ export default function ReceptionDesk({
               </button>
             </form>
 
-            {/* Active Station Card footer */}
             <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
               <div className="overflow-hidden max-w-[60%]">
                 <p className="text-xs font-bold text-slate-800 truncate" title={receptionist.name}>{receptionist.name}</p>
