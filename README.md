@@ -68,6 +68,9 @@ npm start
 | POST | `/api/tickets/:id/reschedule` | Reschedule ticket |
 | POST | `/api/tickets/clear` | Clear hospital queue |
 | GET | `/api/stats` | Dashboard stats |
+| POST | `/api/prescriptions` | Add prescription for a patient |
+| GET | `/api/prescriptions` | List prescriptions (`?hospitalId=&phone=&patientId=`) |
+| POST | `/api/emergency/activate` | Emergency priority by phone + password (loads history, front of queue) |
 | POST | `/api/patients/login` | Patient login (phone + password) |
 | POST | `/api/receptionists/login` | Staff login |
 | POST | `/api/onboard` | Onboard hospital + staff |

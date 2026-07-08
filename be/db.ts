@@ -32,6 +32,10 @@ export function patients(): Collection {
   return db.collection('patients');
 }
 
+export function prescriptions(): Collection {
+  return db.collection('prescriptions');
+}
+
 export function counters(): Collection {
   return db.collection('counters');
 }

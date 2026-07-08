@@ -30,9 +30,10 @@ import {
 interface LiveQueueDashboardProps {
   ticketId: string;
   onBackToHome: () => void;
+  onOpenEmergencyChat: (hospitalId: string) => void;
 }
 
-export default function LiveQueueDashboard({ ticketId, onBackToHome }: LiveQueueDashboardProps) {
+export default function LiveQueueDashboard({ ticketId, onBackToHome, onOpenEmergencyChat }: LiveQueueDashboardProps) {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [hospital, setHospital] = useState<Hospital | null>(null);
   const [queue, setQueue] = useState<Ticket[]>([]);
@@ -166,7 +167,12 @@ export default function LiveQueueDashboard({ ticketId, onBackToHome }: LiveQueue
             <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-200 px-3 py-0.5 rounded-md font-bold uppercase tracking-wider">Live Tracker</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className="hidden md:inline bg-red-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold uppercase">Emergency</span>
+            <button
+              onClick={() => ticket?.hospitalId && onOpenEmergencyChat(ticket.hospitalId)}
+              className="hidden md:inline bg-red-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold uppercase hover:bg-red-700 transition-colors cursor-pointer"
+            >
+              Emergency
+            </button>
             <div className="flex gap-2">
               <Bell size={18} className="text-slate-500 cursor-pointer" />
               <User size={18} className="text-slate-500 cursor-pointer" />
@@ -315,9 +321,13 @@ export default function LiveQueueDashboard({ ticketId, onBackToHome }: LiveQueue
             </div>
 
             <div className="flex gap-4 pt-2">
-              <a href="tel:+1-800-467-7472" className="flex-1 py-2.5 bg-blue-50 text-blue-700 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm border border-blue-100 hover:bg-blue-100/50 transition-colors">
-                <Phone size={12} /> Call Front Desk
-              </a>
+              <button
+                type="button"
+                onClick={() => onOpenEmergencyChat(ticket.hospitalId)}
+                className="flex-1 py-2.5 bg-red-50 text-red-700 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm border border-red-100 hover:bg-red-100/50 transition-colors cursor-pointer"
+              >
+                <Phone size={12} /> Emergency Assistant
+              </button>
               <button
                 onClick={() => { navigator.clipboard.writeText(window.location.href); alert('Share link copied to clipboard!'); }}
                 className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-500 transition-colors cursor-pointer"

@@ -11,6 +11,7 @@ import {
   tickets,
   receptionists,
   patients,
+  prescriptions,
   counters,
   system,
 } from './db';
@@ -103,11 +104,82 @@ const STATUS_ORDER: Record<string, number> = {
   Cancelled: 5,
 };
 
-function sortTickets(a: { status: string; joinedAt: string }, b: { status: string; joinedAt: string }) {
+function sortTickets(
+  a: { status: string; joinedAt: string; isEmergency?: boolean },
+  b: { status: string; joinedAt: string; isEmergency?: boolean }
+) {
+  if (a.isEmergency && !b.isEmergency) return -1;
+  if (!a.isEmergency && b.isEmergency) return 1;
   const orderA = STATUS_ORDER[a.status] || 3;
   const orderB = STATUS_ORDER[b.status] || 3;
   if (orderA !== orderB) return orderA - orderB;
   return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+}
+
+function ticketSortFields(t: Record<string, unknown>) {
+  return {
+    status: String(t.status),
+    joinedAt: String(t.joinedAt),
+    isEmergency: Boolean(t.isEmergency),
+  };
+}
+
+async function savePatientMedicalHistory(patientId: string, medicalHistory: unknown) {
+  if (!medicalHistory) return;
+  await patients().updateOne(
+    { id: patientId },
+    {
+      $set: {
+        medicalHistory,
+        lastTicketAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
+}
+
+async function getPatientMedicalHistory(patientId: string) {
+  const patient = await patients().findOne({ id: patientId });
+  if (patient?.medicalHistory) return patient.medicalHistory;
+
+  const latest = await tickets()
+    .find({ patientId, medicalHistory: { $exists: true } })
+    .sort({ joinedAt: -1 })
+    .limit(1)
+    .toArray();
+  return latest[0]?.medicalHistory || null;
+}
+
+async function emergencyPriorityJoinedAt(hospitalId: string): Promise<string> {
+  const active = await tickets()
+    .find({ hospitalId, status: { $in: ACTIVE_TICKET_STATUSES } })
+    .toArray();
+  if (!active.length) return new Date().toISOString();
+
+  let earliest = Date.now();
+  for (const t of active) {
+    const ts = new Date(String(t.joinedAt)).getTime();
+    if (ts < earliest) earliest = ts;
+  }
+  return new Date(earliest - 1000).toISOString();
+}
+
+function summarizeMedicalHistory(history: Record<string, unknown> | null): string[] {
+  if (!history) return [];
+  const labels: Record<string, string> = {
+    diabetes: 'Diabetes',
+    highBP: 'High Blood Pressure',
+    asthma: 'Asthma',
+    allergies: 'Allergies',
+    heartCondition: 'Heart Condition',
+    surgeries: 'Previous Surgeries',
+  };
+  const items = Object.entries(labels)
+    .filter(([key]) => history[key] === true)
+    .map(([, label]) => label);
+  const other = String(history.otherConditions || '').trim();
+  if (other) items.push(other);
+  return items;
 }
 
 function formatSize(bytes: number): string {
@@ -245,12 +317,7 @@ app.get('/api/tickets', async (req, res) => {
     const { hospitalId } = req.query;
     const filter = hospitalId ? { hospitalId: String(hospitalId) } : {};
     const list = await tickets().find(filter).toArray();
-    list.sort((a, b) =>
-      sortTickets(
-        { status: String(a.status), joinedAt: String(a.joinedAt) },
-        { status: String(b.status), joinedAt: String(b.joinedAt) }
-      )
-    );
+    list.sort((a, b) => sortTickets(ticketSortFields(a), ticketSortFields(b)));
     res.json(list);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -340,7 +407,10 @@ app.post('/api/tickets', async (req, res) => {
       documents,
     };
     if (medicalHistory) ticket.medicalHistory = medicalHistory;
-    if (patientId) ticket.patientId = patientId;
+    if (patientId) {
+      ticket.patientId = patientId;
+      await savePatientMedicalHistory(patientId, medicalHistory);
+    }
 
     await tickets().insertOne(ticket);
 
@@ -621,6 +691,193 @@ app.post('/api/patients/login', async (req, res) => {
   }
 });
 
+app.post('/api/emergency/activate', async (req, res) => {
+  try {
+    const { phone, password, hospitalId, symptoms } = req.body;
+    if (!phone || !password || !hospitalId) {
+      return res.status(400).json({ error: 'Phone number, password, and hospital are required' });
+    }
+
+    const phoneNormalized = normalizePhone(phone);
+    if (!phoneNormalized) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
+
+    const patient = await patients().findOne({ phoneNormalized });
+    if (!patient) {
+      return res.status(404).json({
+        error: 'No record found for this number. Please complete registration first.',
+      });
+    }
+
+    const match = await bcrypt.compare(password, patient.password as string);
+    if (!match) {
+      return res.status(401).json({ error: 'Invalid phone number or password' });
+    }
+
+    const hospital = await hospitals().findOne({ id: hospitalId });
+    if (!hospital) {
+      return res.status(404).json({ error: 'Hospital not found' });
+    }
+
+    const patientId = String(patient.id);
+    const medicalHistory = await getPatientMedicalHistory(patientId);
+    const priorityJoinedAt = await emergencyPriorityJoinedAt(hospitalId);
+
+    const existingActive = await tickets().findOne({
+      patientId,
+      hospitalId,
+      status: { $in: ACTIVE_TICKET_STATUSES },
+    });
+
+    let ticket;
+    if (existingActive) {
+      const updates: Record<string, unknown> = {
+        status: 'Urgent',
+        severity: 'Critical',
+        reason: 'Emergency / Urgent Care',
+        isEmergency: true,
+        joinedAt: priorityJoinedAt,
+        department: 'Cardiology',
+      };
+      if (symptoms) updates.symptoms = symptoms;
+      if (medicalHistory) updates.medicalHistory = medicalHistory;
+
+      await tickets().updateOne({ id: existingActive.id }, { $set: updates });
+      ticket = await tickets().findOne({ id: existingActive.id });
+    } else {
+      const token = await nextToken(hospitalId, 'A');
+      const id = `ticket-${Date.now()}`;
+      const newTicket: Record<string, unknown> = {
+        id,
+        token,
+        fullName: patient.fullName,
+        phone: patient.phone,
+        age: 30,
+        gender: 'Not Specified',
+        symptoms: symptoms || 'Emergency activation',
+        severity: 'Critical',
+        status: 'Urgent',
+        joinedAt: priorityJoinedAt,
+        type: 'Walk-in',
+        reason: 'Emergency / Urgent Care',
+        department: 'Cardiology',
+        hospitalId,
+        hospitalName: hospital.name,
+        documents: [],
+        patientId,
+        isEmergency: true,
+      };
+      if (medicalHistory) newTicket.medicalHistory = medicalHistory;
+
+      await tickets().insertOne(newTicket);
+      ticket = newTicket;
+
+      await hospitals().updateOne(
+        { id: hospitalId },
+        { $set: { liveQueueWait: (hospital.liveQueueWait || 5) + 10 } }
+      );
+    }
+
+    const historySummary = summarizeMedicalHistory(
+      medicalHistory as Record<string, unknown> | null
+    );
+
+    res.json({
+      ticket,
+      patient: patientProfile({
+        id: patientId,
+        fullName: String(patient.fullName),
+        phone: String(patient.phone),
+      }),
+      medicalHistory: medicalHistory || null,
+      historySummary,
+      queuePosition: 1,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/prescriptions', async (req, res) => {
+  try {
+    const { hospitalId, patientId, phone } = req.query;
+    const filter: Record<string, unknown> = {};
+    if (hospitalId) filter.hospitalId = String(hospitalId);
+
+    const phoneNormalized = phone ? normalizePhone(String(phone)) : '';
+    if (patientId && phoneNormalized) {
+      filter.$or = [{ patientId: String(patientId) }, { phoneNormalized }];
+    } else if (patientId) {
+      filter.patientId = String(patientId);
+    } else if (phoneNormalized) {
+      filter.phoneNormalized = phoneNormalized;
+    }
+
+    const list = await prescriptions().find(filter).sort({ createdAt: -1 }).toArray();
+    res.json(list);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/prescriptions', async (req, res) => {
+  try {
+    const {
+      patientId,
+      patientName,
+      phone,
+      ticketId,
+      hospitalId,
+      hospitalName,
+      prescribedBy,
+      patientIssue,
+      medication,
+      dosage,
+      frequency,
+      duration,
+      notes,
+    } = req.body;
+
+    if (!patientName || !phone || !hospitalId || !patientIssue || !medication || !dosage) {
+      return res.status(400).json({
+        error: 'Patient name, phone, hospital, patient issue, medication, and dosage are required',
+      });
+    }
+
+    const phoneNormalized = normalizePhone(phone);
+    if (!phoneNormalized) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
+
+    const hospital = await hospitals().findOne({ id: hospitalId });
+
+    const prescription: Record<string, unknown> = {
+      id: `rx-${Date.now()}`,
+      patientName: String(patientName).trim(),
+      phone: String(phone).trim(),
+      phoneNormalized,
+      hospitalId,
+      hospitalName: hospitalName || hospital?.name || 'Hospital',
+      prescribedBy: prescribedBy || 'Staff',
+      patientIssue: String(patientIssue).trim(),
+      medication: String(medication).trim(),
+      dosage: String(dosage).trim(),
+      frequency: frequency || 'As directed',
+      duration: duration || '7 days',
+      notes: notes || '',
+      createdAt: new Date().toISOString(),
+    };
+    if (patientId) prescription.patientId = String(patientId);
+    if (ticketId) prescription.ticketId = String(ticketId);
+
+    await prescriptions().insertOne(prescription);
+    res.status(201).json(prescription);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/uploads', async (req, res) => {
   try {
     const files = req.body.files as { name: string; type: string; data: string }[];
@@ -660,6 +917,10 @@ async function start() {
   await tickets().createIndex({ patientId: 1 });
   await receptionists().createIndex({ username: 1 }, { unique: true });
   await patients().createIndex({ phoneNormalized: 1 }, { unique: true });
+  await prescriptions().createIndex({ id: 1 }, { unique: true });
+  await prescriptions().createIndex({ hospitalId: 1 });
+  await prescriptions().createIndex({ patientId: 1 });
+  await prescriptions().createIndex({ phoneNormalized: 1 });
   await counters().createIndex({ hospitalId: 1 }, { unique: true });
   await seedDatabase();
 

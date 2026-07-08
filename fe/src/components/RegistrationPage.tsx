@@ -17,9 +17,10 @@ interface RegistrationPageProps {
   hospital: Hospital;
   onBack: () => void;
   onSubmit: (formData: CreateTicketPayload) => Promise<void>;
+  onOpenEmergencyChat: () => void;
 }
 
-export default function RegistrationPage({ hospital, onBack, onSubmit }: RegistrationPageProps) {
+export default function RegistrationPage({ hospital, onBack, onSubmit, onOpenEmergencyChat }: RegistrationPageProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -191,7 +192,12 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
           <a className="text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors cursor-pointer" onClick={onBack}>Reports</a>
         </div>
         <div>
-          <span className="bg-red-600 text-white px-4 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider cursor-pointer hover:bg-red-700 transition-colors">Emergency</span>
+          <span
+            onClick={onOpenEmergencyChat}
+            className="bg-red-600 text-white px-4 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider cursor-pointer hover:bg-red-700 transition-colors"
+          >
+            Emergency
+          </span>
         </div>
       </nav>
 
@@ -605,11 +611,15 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
           <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-3">
             <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">Need assistance with details?</h4>
             <p className="text-xs text-slate-500 leading-relaxed">
-              If you have any questions during registration, feel free to speak with our receptionist.
+              Need urgent help? Use the emergency assistant to load your medical history and jump to the front of the queue.
             </p>
-            <a href="tel:+1-800-467-7472" className="w-full py-2 bg-white hover:bg-slate-50 border border-blue-600 text-blue-600 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer">
-              <PhoneCall size={12} /> Call Front Desk
-            </a>
+            <button
+              type="button"
+              onClick={onOpenEmergencyChat}
+              className="w-full py-2 bg-white hover:bg-red-50 border border-red-300 text-red-600 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <PhoneCall size={12} /> Emergency Assistant
+            </button>
           </div>
         </aside>
 

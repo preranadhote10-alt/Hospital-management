@@ -10,6 +10,8 @@ import {
   DashboardStats,
   Patient,
   PatientSession,
+  EmergencyActivationResult,
+  Prescription,
 } from './types';
 
 const POLL_MS = 3000;
@@ -161,14 +163,32 @@ export function computeStats(tickets: Ticket[]): DashboardStats {
   return { todayTotal, onlineBookings, walkins, avgWaitTime };
 }
 
-export function queuePosition(ticket: Ticket, tickets: Ticket[]): number {
-  const joined = new Date(ticket.joinedAt).getTime();
-  return tickets.filter(
-    (t) =>
-      t.id !== ticket.id &&
-      (t.status === 'Waiting' || t.status === 'Urgent' || t.status === 'Called') &&
-      new Date(t.joinedAt).getTime() < joined
-  ).length;
+export function queuePosition(ticket: Ticket, ticketList: Ticket[]): number {
+  const active = ticketList.filter(
+    (t) => t.status === 'Waiting' || t.status === 'Urgent' || t.status === 'Called'
+  );
+  const sorted = [...active].sort((a, b) => {
+    if (a.isEmergency && !b.isEmergency) return -1;
+    if (!a.isEmergency && b.isEmergency) return 1;
+    const statusOrder: Record<string, number> = { Urgent: 1, Called: 2, Waiting: 3 };
+    const orderA = statusOrder[a.status] || 3;
+    const orderB = statusOrder[b.status] || 3;
+    if (orderA !== orderB) return orderA - orderB;
+    return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+  });
+  return sorted.findIndex((t) => t.id === ticket.id);
+}
+
+export function sortTicketsForQueue(ticketList: Ticket[]): Ticket[] {
+  return [...ticketList].sort((a, b) => {
+    if (a.isEmergency && !b.isEmergency) return -1;
+    if (!a.isEmergency && b.isEmergency) return 1;
+    const statusOrder: Record<string, number> = { Urgent: 1, Called: 2, Waiting: 3 };
+    const orderA = statusOrder[a.status] || 3;
+    const orderB = statusOrder[b.status] || 3;
+    if (orderA !== orderB) return orderA - orderB;
+    return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +269,62 @@ export function savePatientAfterRegistration(
   };
   sessionStorage.setItem(PATIENT_SESSION_KEY, JSON.stringify(session));
   return session;
+}
+
+// ---------------------------------------------------------------------------
+// Emergency activation
+// ---------------------------------------------------------------------------
+export async function activateEmergency(payload: {
+  phone: string;
+  password: string;
+  hospitalId: string;
+  symptoms?: string;
+}): Promise<EmergencyActivationResult> {
+  const result = await api<EmergencyActivationResult>('/api/emergency/activate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  savePatientAfterRegistration(result.patient, result.ticket.id);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Prescriptions
+// ---------------------------------------------------------------------------
+export interface CreatePrescriptionPayload {
+  patientId?: string;
+  patientName: string;
+  phone: string;
+  ticketId?: string;
+  hospitalId: string;
+  hospitalName?: string;
+  prescribedBy?: string;
+  patientIssue: string;
+  medication: string;
+  dosage: string;
+  frequency?: string;
+  duration?: string;
+  notes?: string;
+}
+
+export async function getPrescriptions(params: {
+  hospitalId?: string;
+  patientId?: string;
+  phone?: string;
+}): Promise<Prescription[]> {
+  const qs = new URLSearchParams();
+  if (params.hospitalId) qs.set('hospitalId', params.hospitalId);
+  if (params.patientId) qs.set('patientId', params.patientId);
+  if (params.phone) qs.set('phone', params.phone);
+  const query = qs.toString();
+  return api<Prescription[]>(`/api/prescriptions${query ? `?${query}` : ''}`);
+}
+
+export async function createPrescription(payload: CreatePrescriptionPayload): Promise<Prescription> {
+  return api<Prescription>('/api/prescriptions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 // ---------------------------------------------------------------------------

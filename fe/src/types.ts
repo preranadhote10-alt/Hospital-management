@@ -53,6 +53,7 @@ export interface Ticket {
   medicalHistory?: MedicalHistory;
   documents?: UploadedDoc[];
   patientId?: string;
+  isEmergency?: boolean;
   calledAt?: string;
   completedAt?: string;
 }
@@ -87,4 +88,31 @@ export interface DashboardStats {
   onlineBookings: number;
   walkins: number;
   avgWaitTime: number;
+}
+
+export interface EmergencyActivationResult {
+  ticket: Ticket;
+  patient: Patient;
+  medicalHistory: MedicalHistory | null;
+  historySummary: string[];
+  queuePosition: number;
+}
+
+export interface Prescription {
+  id: string;
+  patientId?: string;
+  patientName: string;
+  phone: string;
+  phoneNormalized?: string;
+  ticketId?: string;
+  hospitalId: string;
+  hospitalName: string;
+  prescribedBy: string;
+  patientIssue: string;
+  medication: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+  notes?: string;
+  createdAt: string;
 }

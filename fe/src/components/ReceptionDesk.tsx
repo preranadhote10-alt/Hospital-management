@@ -5,18 +5,15 @@ import {
   User,
   LayoutDashboard,
   Users,
-  Calendar,
-  BarChart3,
-  Settings,
-  HelpCircle,
   LogOut,
   Clock,
   Check,
   RefreshCw,
   Plus,
   AlertCircle,
+  ClipboardList,
 } from 'lucide-react';
-import { Ticket, TicketSeverity, Receptionist, DashboardStats } from '../types';
+import { Ticket, TicketSeverity, Receptionist, DashboardStats, Prescription } from '../types';
 import {
   getStoredReceptionist,
   loginStaff,
@@ -27,11 +24,14 @@ import {
   createTicket,
   clearHospitalTickets,
   computeStats,
+  getPrescriptions,
+  createPrescription,
 } from '../services';
 
 interface ReceptionDeskProps {
   onBackToHome: () => void;
   onSelectTicket: (ticketId: string) => void;
+  onOpenEmergencyChat: (hospitalId: string) => void;
 }
 
 function mapAuthError(err: unknown): string {
@@ -54,11 +54,12 @@ function mapAuthError(err: unknown): string {
   }
 }
 
-export default function ReceptionDesk({ onBackToHome, onSelectTicket }: ReceptionDeskProps) {
+export default function ReceptionDesk({ onBackToHome, onSelectTicket, onOpenEmergencyChat }: ReceptionDeskProps) {
   const [receptionist, setReceptionist] = useState<Receptionist | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'login' | 'onboard'>('login');
+  const [deskTab, setDeskTab] = useState<'queue' | 'prescriptions'>('queue');
 
   // Dashboard Core State
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -103,6 +104,18 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
   const [isUrgent, setIsUrgent] = useState(false);
   const [registering, setRegistering] = useState(false);
 
+  // Prescription state
+  const [selectedPatientTicketId, setSelectedPatientTicketId] = useState('');
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [rxLoading, setRxLoading] = useState(false);
+  const [rxSaving, setRxSaving] = useState(false);
+  const [rxMedication, setRxMedication] = useState('');
+  const [rxDosage, setRxDosage] = useState('');
+  const [rxPatientIssue, setRxPatientIssue] = useState('');
+  const [rxFrequency, setRxFrequency] = useState('Twice daily');
+  const [rxDuration, setRxDuration] = useState('7 days');
+  const [rxNotes, setRxNotes] = useState('');
+
   const hospitalBanners = [
     { name: 'Modern Glass Plaza', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?auto=format&fit=crop&q=80&w=600' },
     { name: 'Tech Specialty Wing', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&q=80&w=600' },
@@ -136,6 +149,85 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
     );
     return () => unsub();
   }, [receptionist]);
+
+  const selectedPatientTicket = tickets.find((t) => t.id === selectedPatientTicketId);
+
+  const loadPrescriptions = async (ticket: Ticket) => {
+    if (!receptionist) return;
+    setRxLoading(true);
+    try {
+      const list = await getPrescriptions({
+        hospitalId: receptionist.hospitalId,
+        phone: ticket.phone,
+        ...(ticket.patientId ? { patientId: ticket.patientId } : {}),
+      });
+      setPrescriptions(list);
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : 'Could not load prescriptions.';
+      alert(message);
+    } finally {
+      setRxLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedPatientTicket || deskTab !== 'prescriptions') return;
+    setRxPatientIssue(
+      selectedPatientTicket.symptoms ||
+        selectedPatientTicket.reason ||
+        ''
+    );
+    loadPrescriptions(selectedPatientTicket);
+  }, [selectedPatientTicketId, deskTab, receptionist?.hospitalId]);
+
+  const openPrescriptionsForTicket = (ticket: Ticket) => {
+    setSelectedPatientTicketId(ticket.id);
+    setRxPatientIssue(ticket.symptoms || ticket.reason || '');
+    setDeskTab('prescriptions');
+  };
+
+  const handleAddPrescription = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!receptionist || !selectedPatientTicket) return;
+    if (!rxPatientIssue.trim()) {
+      alert('Please enter the patient issue / chief complaint.');
+      return;
+    }
+    if (!rxMedication.trim() || !rxDosage.trim()) {
+      alert('Medication name and dosage are required.');
+      return;
+    }
+    setRxSaving(true);
+    try {
+      await createPrescription({
+        patientId: selectedPatientTicket.patientId,
+        patientName: selectedPatientTicket.fullName,
+        phone: selectedPatientTicket.phone,
+        ticketId: selectedPatientTicket.id,
+        hospitalId: receptionist.hospitalId,
+        hospitalName: receptionist.hospitalName,
+        prescribedBy: receptionist.name,
+        patientIssue: rxPatientIssue,
+        medication: rxMedication,
+        dosage: rxDosage,
+        frequency: rxFrequency,
+        duration: rxDuration,
+        notes: rxNotes,
+      });
+      setRxMedication('');
+      setRxDosage('');
+      setRxNotes('');
+      await loadPrescriptions(selectedPatientTicket);
+      alert('Prescription saved for this patient.');
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : 'Could not save prescription.';
+      alert(message);
+    } finally {
+      setRxSaving(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -626,18 +718,14 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
 
           <nav className="p-4 space-y-1">
             {[
-              { label: 'Live Queue', icon: <LayoutDashboard size={14} />, active: true },
-              { label: 'Patient Records', icon: <Users size={14} /> },
-              { label: 'Staff Scheduling', icon: <Calendar size={14} /> },
-              { label: 'Analytics Insights', icon: <BarChart3 size={14} /> },
-              { label: 'Configuration', icon: <Settings size={14} /> },
-              { label: 'Help Center', icon: <HelpCircle size={14} /> },
+              { id: 'queue' as const, label: 'Live Queue', icon: <LayoutDashboard size={14} /> },
+              { id: 'prescriptions' as const, label: 'Prescriptions', icon: <ClipboardList size={14} /> },
             ].map((item) => (
               <button
-                key={item.label}
-                onClick={() => { if (!item.active) alert(`${item.label} view is not part of this build. Use the Live Queue view.`); }}
+                key={item.id}
+                onClick={() => setDeskTab(item.id)}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  item.active ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'
+                  deskTab === item.id ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 {item.icon}
@@ -688,7 +776,12 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
             >
               <RefreshCw size={10} /> Clear Queue
             </button>
-            <span className="bg-red-600 text-white px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wider">Emergency</span>
+            <button
+              onClick={() => receptionist && onOpenEmergencyChat(receptionist.hospitalId)}
+              className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wider cursor-pointer transition-colors"
+            >
+              Emergency
+            </button>
             <div className="flex gap-2">
               <Bell size={16} className="text-slate-500 cursor-pointer" />
               <User size={16} className="text-slate-500 cursor-pointer" />
@@ -696,7 +789,9 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
           </div>
         </header>
 
-        <div className="p-6 md:p-8 space-y-8 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div className="p-6 md:p-8 space-y-8 max-w-7xl w-full mx-auto">
+          {deskTab === 'queue' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
           <div className="lg:col-span-8 space-y-8">
 
@@ -761,7 +856,9 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-bold border ${
-                            t.status === 'Urgent'
+                            t.isEmergency
+                              ? 'bg-red-100 text-red-700 border-red-300'
+                              : t.status === 'Urgent'
                               ? 'bg-red-50 text-red-600 border-red-100'
                               : t.status === 'Called'
                                 ? 'bg-blue-50 text-blue-600 border-blue-100'
@@ -769,7 +866,7 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
                                   ? 'bg-green-50 text-green-700 border-green-100'
                                   : 'bg-slate-50 text-slate-500 border-slate-100'
                           }`}>
-                            {t.status.toUpperCase()}
+                            {t.isEmergency ? 'EMERGENCY' : t.status.toUpperCase()}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-400">
@@ -794,8 +891,15 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() => handleUpdateStatus(t.id, 'Cancelled')}
+                              <button
+                                onClick={() => openPrescriptionsForTicket(t)}
+                                className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded-md font-semibold text-xs hover:bg-purple-100/50 transition-all cursor-pointer whitespace-nowrap shrink-0"
+                                title="Add prescription"
+                              >
+                                Rx
+                              </button>
+                              <button
+                                onClick={() => handleUpdateStatus(t.id, 'Cancelled')}
                             className="bg-slate-50 text-red-600 p-1.5 rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-200 transition-colors cursor-pointer inline-flex items-center shrink-0 ml-1"
                             title="Cancel Ticket"
                           >
@@ -913,6 +1017,149 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
             </div>
           </aside>
 
+        </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              <section className="lg:col-span-5 bg-white rounded-lg border border-slate-200 shadow-sm p-6 space-y-4">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Add Prescription</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">Store medication details for a registered patient.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Select Patient</label>
+                  <select
+                    value={selectedPatientTicketId}
+                    onChange={(e) => setSelectedPatientTicketId(e.target.value)}
+                    className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs bg-slate-50"
+                  >
+                    <option value="">Choose a patient from queue...</option>
+                    {tickets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.token} — {t.fullName} ({t.phone})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedPatientTicket && (
+                  <form onSubmit={handleAddPrescription} className="space-y-3 pt-2 border-t border-slate-100">
+                    <div className="bg-slate-50 p-3 rounded-lg text-xs">
+                      <p className="font-bold text-slate-800">{selectedPatientTicket.fullName}</p>
+                      <p className="text-slate-500">{selectedPatientTicket.phone}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Patient Issue / Complaint *</label>
+                      <textarea
+                        value={rxPatientIssue}
+                        onChange={(e) => setRxPatientIssue(e.target.value)}
+                        rows={2}
+                        placeholder="e.g. Chest pain, fever, follow-up for diabetes..."
+                        className="w-full p-3 border border-slate-200 rounded-lg text-xs resize-none"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Medication *</label>
+                      <input
+                        value={rxMedication}
+                        onChange={(e) => setRxMedication(e.target.value)}
+                        placeholder="e.g. Amoxicillin"
+                        className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Dosage *</label>
+                      <input
+                        value={rxDosage}
+                        onChange={(e) => setRxDosage(e.target.value)}
+                        placeholder="e.g. 500mg"
+                        className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Frequency</label>
+                        <input
+                          value={rxFrequency}
+                          onChange={(e) => setRxFrequency(e.target.value)}
+                          className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Duration</label>
+                        <input
+                          value={rxDuration}
+                          onChange={(e) => setRxDuration(e.target.value)}
+                          className="w-full h-10 px-3 border border-slate-200 rounded-lg text-xs"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Notes</label>
+                      <textarea
+                        value={rxNotes}
+                        onChange={(e) => setRxNotes(e.target.value)}
+                        rows={2}
+                        placeholder="Take after meals, avoid alcohol..."
+                        className="w-full p-3 border border-slate-200 rounded-lg text-xs resize-none"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={rxSaving}
+                      className="w-full py-2.5 bg-purple-600 text-white rounded-lg font-bold text-xs hover:bg-purple-700 disabled:opacity-50 cursor-pointer"
+                    >
+                      {rxSaving ? 'Saving...' : 'Save Prescription'}
+                    </button>
+                  </form>
+                )}
+              </section>
+
+              <section className="lg:col-span-7 bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100">
+                  <h2 className="text-base font-bold text-slate-900">Patient Prescription History</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {selectedPatientTicket
+                      ? `Records for ${selectedPatientTicket.fullName}`
+                      : 'Select a patient to view their prescriptions'}
+                  </p>
+                </div>
+                <div className="p-6 space-y-3 max-h-[520px] overflow-y-auto">
+                  {!selectedPatientTicket && (
+                    <p className="text-xs text-slate-400 text-center py-8">Select a patient to view or add prescriptions.</p>
+                  )}
+                  {selectedPatientTicket && rxLoading && (
+                    <p className="text-xs text-slate-400 text-center py-8">Loading prescriptions...</p>
+                  )}
+                  {selectedPatientTicket && !rxLoading && prescriptions.length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-8">No prescriptions on file for this patient yet.</p>
+                  )}
+                  {prescriptions.map((rx) => (
+                    <div key={rx.id} className="border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+                      <div className="flex justify-between items-start gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-purple-700">{rx.medication}</p>
+                          <p className="text-xs text-slate-600 mt-0.5">
+                            {rx.dosage} · {rx.frequency} · {rx.duration}
+                          </p>
+                          {rx.patientIssue && (
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              Issue: {rx.patientIssue}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                          {new Date(rx.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      {rx.notes && <p className="text-[11px] text-slate-500 mt-2">{rx.notes}</p>}
+                      <p className="text-[10px] text-slate-400 mt-2">Prescribed by {rx.prescribedBy}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
         </div>
       </main>
     </div>

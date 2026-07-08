@@ -29,6 +29,7 @@ interface LandingPageProps {
   onNavigateToStaff: () => void;
   onNavigateToStatus: (ticketId: string) => void;
   onPatientLoginSuccess: (ticketId: string | null) => void;
+  onOpenEmergencyChat: () => void;
 }
 
 export default function LandingPage({ 
@@ -37,6 +38,7 @@ export default function LandingPage({
   onNavigateToStaff,
   onNavigateToStatus,
   onPatientLoginSuccess,
+  onOpenEmergencyChat,
 }: LandingPageProps) {
   const [specialtySearch, setSpecialtySearch] = useState('');
   const [locationSearch, setLocationSearch] = useState('');
@@ -98,9 +100,12 @@ export default function LandingPage({
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <a href="tel:+1-800-467-7472" className="hidden md:flex bg-red-600 text-white px-5 py-1.5 rounded-lg font-semibold text-xs hover:bg-red-700 transition-all shadow-sm cursor-pointer">
+            <button
+              onClick={onOpenEmergencyChat}
+              className="hidden md:flex bg-red-600 text-white px-5 py-1.5 rounded-lg font-semibold text-xs hover:bg-red-700 transition-all shadow-sm cursor-pointer"
+            >
               Emergency
-            </a>
+            </button>
             <div className="flex items-center gap-2">
               <button onClick={onNavigateToStaff} className="p-2 text-slate-500 hover:bg-slate-50 rounded-full transition-colors relative cursor-pointer" title="Staff Portal">
                 <Bell size={18} />
@@ -393,14 +398,17 @@ export default function LandingPage({
             <div>
               <h2 className="text-xl font-bold mb-1">Emergency Situation?</h2>
               <p className="text-slate-400 max-w-xl text-xs leading-relaxed">
-                If you are experiencing life-threatening symptoms, call our medical emergency hotline immediately or proceed directly to the nearest ER.
+                Use our emergency assistant to verify your phone and password, load your medical history, and get immediate queue priority at your hospital.
               </p>
             </div>
           </div>
           <div className="relative z-10">
-            <a href="tel:+1-800-467-7472" className="bg-red-600 hover:bg-red-700 text-white px-6 py-2.5 rounded-lg font-semibold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
-              <Phone size={14} /> 1-800-HOSPIRA
-            </a>
+            <button
+              onClick={onOpenEmergencyChat}
+              className="bg-red-600 hover:bg-red-700 text-white px-6 py-2.5 rounded-lg font-semibold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <ShieldAlert size={14} /> Open Emergency Assistant
+            </button>
           </div>
         </div>
       </section>

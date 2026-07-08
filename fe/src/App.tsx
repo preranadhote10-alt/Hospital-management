@@ -3,6 +3,7 @@ import LandingPage from './components/LandingPage.tsx';
 import RegistrationPage from './components/RegistrationPage.tsx';
 import LiveQueueDashboard from './components/LiveQueueDashboard.tsx';
 import ReceptionDesk from './components/ReceptionDesk.tsx';
+import EmergencyChatbot from './components/EmergencyChatbot.tsx';
 import { Hospital } from './types.ts';
 import { Activity } from 'lucide-react';
 import {
@@ -20,6 +21,13 @@ export default function App() {
   const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
+  const [emergencyHospitalId, setEmergencyHospitalId] = useState<string | undefined>();
+
+  const openEmergencyChat = (hospitalId?: string) => {
+    setEmergencyHospitalId(hospitalId);
+    setEmergencyOpen(true);
+  };
 
   // Restore patient session (queue ticket) on load.
   useEffect(() => {
@@ -156,6 +164,7 @@ export default function App() {
               setView('status');
             }}
             onPatientLoginSuccess={handlePatientLoginSuccess}
+            onOpenEmergencyChat={() => openEmergencyChat()}
           />
         )}
 
@@ -164,6 +173,7 @@ export default function App() {
             hospital={selectedHospital}
             onBack={() => setView('landing')}
             onSubmit={handleRegisterPatient}
+            onOpenEmergencyChat={() => openEmergencyChat(selectedHospital.id)}
           />
         )}
 
@@ -171,6 +181,7 @@ export default function App() {
           <LiveQueueDashboard
             ticketId={selectedTicketId}
             onBackToHome={() => setView('landing')}
+            onOpenEmergencyChat={(hospitalId) => openEmergencyChat(hospitalId)}
           />
         )}
 
@@ -181,9 +192,21 @@ export default function App() {
               setSelectedTicketId(id);
               setView('status');
             }}
+            onOpenEmergencyChat={(hospitalId) => openEmergencyChat(hospitalId)}
           />
         )}
       </div>
+
+      <EmergencyChatbot
+        open={emergencyOpen}
+        onClose={() => setEmergencyOpen(false)}
+        hospitals={hospitals}
+        defaultHospitalId={emergencyHospitalId}
+        onActivated={(ticketId) => {
+          setSelectedTicketId(ticketId);
+          setView('status');
+        }}
+      />
     </div>
   );
 }
