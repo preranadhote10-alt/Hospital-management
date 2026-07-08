@@ -16,11 +16,9 @@ import {
   Plus,
   AlertCircle,
 } from 'lucide-react';
-import { onAuthStateChanged } from 'firebase/auth';
 import { Ticket, TicketSeverity, Receptionist, DashboardStats } from '../types';
-import { auth } from '../firebase';
 import {
-  getUserProfile,
+  getStoredReceptionist,
   loginStaff,
   logoutStaff,
   onboardHospitalAndStaff,
@@ -112,22 +110,10 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
     { name: 'Wellness Clinic Interior', url: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&q=80&w=600' },
   ];
 
-  // Restore session from Firebase Auth.
+  // Restore session from sessionStorage.
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        try {
-          const profile = await getUserProfile(user.uid);
-          setReceptionist(profile);
-        } catch {
-          setReceptionist(null);
-        }
-      } else {
-        setReceptionist(null);
-      }
-      setAuthChecking(false);
-    });
-    return () => unsub();
+    setReceptionist(getStoredReceptionist());
+    setAuthChecking(false);
   }, []);
 
   // Live queue + stats subscription (real-time) once signed in.
@@ -293,7 +279,7 @@ export default function ReceptionDesk({ onBackToHome, onSelectTicket }: Receptio
       t.department.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  /* While Firebase determines auth state, show a lightweight loader */
+  /* While session is restored, show a lightweight loader */
   if (authChecking) {
     return (
       <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-8">

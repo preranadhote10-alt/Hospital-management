@@ -5,6 +5,13 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // SPA entry lives at repo root (index.html → fe/src/main.tsx).
+    root: path.resolve(__dirname),
+    build: {
+      // Client bundle only — server bundle is emitted separately to dist/server.cjs.
+      outDir: 'dist/public',
+      emptyOutDir: true,
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

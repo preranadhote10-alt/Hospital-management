@@ -50,7 +50,7 @@ export default function App() {
         <div className="text-center space-y-4 animate-pulse">
           <Activity size={32} className="text-blue-600 mx-auto animate-spin" />
           <p className="text-slate-900 font-semibold text-lg tracking-tight">Hospira System Booting...</p>
-          <p className="text-slate-500 text-xs">Synchronizing Firebase and seeding clinics...</p>
+          <p className="text-slate-500 text-xs">Connecting to Hospira API and MongoDB...</p>
         </div>
       </div>
     );

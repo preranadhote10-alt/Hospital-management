@@ -1,20 +1,75 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Hospira — Hospital Queue Management
 
-# Run and deploy your AI Studio app
+Patient portal and virtual triage queue for healthcare facilities.
 
-This contains everything you need to run your app locally.
+## Architecture
 
-View your app in AI Studio: https://ai.studio/apps/8ec085bb-e3ec-4fb3-9945-9927291c550b
+| Layer | Path | Role |
+|-------|------|------|
+| **Frontend** | `fe/src/` | React SPA — calls `/api/*` REST endpoints |
+| **Backend** | `be/server.ts` | Express API + MongoDB + static/Vite host |
 
-## Run Locally
+All data is stored in **MongoDB**. The browser only talks to the Express API.
 
-**Prerequisites:**  Node.js
+## Requirements
 
+- Node.js 18+
+- MongoDB (local or [MongoDB Atlas](https://www.mongodb.com/atlas) test cluster)
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Setup
+
+```bash
+npm install
+cp .env.example .env.local   # set your MongoDB URI
+```
+
+### MongoDB URI examples
+
+```bash
+# Local MongoDB
+MONGODB_URI="mongodb://localhost:27017/hospira"
+
+# MongoDB Atlas (test cluster)
+MONGODB_URI="mongodb+srv://USER:PASSWORD@cluster.mongodb.net/hospira?retryWrites=true&w=majority"
+```
+
+## Run
+
+```bash
+npm run dev        # API + Vite HMR at http://localhost:3000
+```
+
+### Default staff logins
+
+| Username | Password | Hospital |
+|----------|----------|----------|
+| `jane` | `hospira123` | St. Jude Medical Center |
+| `alice` | `hospira123` | Heritage Health |
+
+## Production
+
+```bash
+npm run build
+npm start
+```
+
+## API routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| GET | `/api/hospitals` | List hospitals |
+| GET | `/api/hospitals/:id` | Get hospital |
+| POST | `/api/hospitals` | Create hospital |
+| GET | `/api/tickets` | List tickets (`?hospitalId=`) |
+| GET | `/api/tickets/:id` | Get ticket |
+| POST | `/api/tickets` | Create ticket |
+| PATCH | `/api/tickets/:id` | Update status |
+| POST | `/api/tickets/:id/reschedule` | Reschedule ticket |
+| POST | `/api/tickets/clear` | Clear hospital queue |
+| GET | `/api/stats` | Dashboard stats |
+| POST | `/api/receptionists/login` | Staff login |
+| POST | `/api/onboard` | Onboard hospital + staff |
+| POST | `/api/uploads` | Upload patient documents |
+
+Patient documents are stored on disk under `uploads/` and served at `/uploads/...`.
