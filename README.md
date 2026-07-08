@@ -68,6 +68,7 @@ npm start
 | POST | `/api/tickets/:id/reschedule` | Reschedule ticket |
 | POST | `/api/tickets/clear` | Clear hospital queue |
 | GET | `/api/stats` | Dashboard stats |
+| POST | `/api/patients/login` | Patient login (phone + password) |
 | POST | `/api/receptionists/login` | Staff login |
 | POST | `/api/onboard` | Onboard hospital + staff |
 | POST | `/api/uploads` | Upload patient documents |

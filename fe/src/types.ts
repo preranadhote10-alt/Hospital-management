@@ -52,6 +52,7 @@ export interface Ticket {
   hospitalName: string;
   medicalHistory?: MedicalHistory;
   documents?: UploadedDoc[];
+  patientId?: string;
   calledAt?: string;
   completedAt?: string;
 }
@@ -69,6 +70,16 @@ export interface Receptionist {
   username: string;
   hospitalId: string;
   hospitalName: string;
+}
+
+export interface Patient {
+  id: string;
+  fullName: string;
+  phone: string;
+}
+
+export interface PatientSession extends Patient {
+  activeTicketId: string | null;
 }
 
 export interface DashboardStats {

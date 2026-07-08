@@ -23,6 +23,8 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
   const [currentStep, setCurrentStep] = useState(1);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState('Select Gender');
   const [symptoms, setSymptoms] = useState('');
@@ -84,6 +86,16 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
       setCurrentStep(2);
       return;
     }
+    if (!password || password.length < 6) {
+      alert('Please set a password (at least 6 characters) in Step 2.');
+      setCurrentStep(2);
+      return;
+    }
+    if (password !== confirmPassword) {
+      alert('Passwords do not match. Please re-enter them in Step 2.');
+      setCurrentStep(2);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -101,6 +113,7 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
       const registrationData: CreateTicketPayload = {
         fullName,
         phone,
+        password,
         age: age ? parseInt(age) : 30,
         gender,
         symptoms,
@@ -117,7 +130,14 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
       await onSubmit(registrationData);
     } catch (err) {
       console.error(err);
-      alert('Registration failed. Please try again.');
+      const message = err instanceof Error ? err.message : 'Registration failed.';
+      if (message.includes('already have an active queue ticket')) {
+        alert(message + ' Use "Track My Queue" on the home page to log in.');
+      } else if (message.includes('already registered')) {
+        alert(message);
+      } else {
+        alert('Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -131,6 +151,14 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
       }
       if (!phone.trim()) {
         alert('Please enter your phone number.');
+        return;
+      }
+      if (!password || password.length < 6) {
+        alert('Please set a password (at least 6 characters).');
+        return;
+      }
+      if (password !== confirmPassword) {
+        alert('Passwords do not match.');
         return;
       }
     }
@@ -271,6 +299,29 @@ export default function RegistrationPage({ hospital, onBack, onSubmit }: Registr
                         className="w-full h-11 px-4 rounded-lg border border-slate-200 text-xs focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none text-slate-800"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Account Password * (min 6)</label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Create a password to track your queue later"
+                        className="w-full h-11 px-4 rounded-lg border border-slate-200 text-xs focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none text-slate-800"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Confirm Password *</label>
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter your password"
+                        className="w-full h-11 px-4 rounded-lg border border-slate-200 text-xs focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none text-slate-800"
+                      />
+                    </div>
+                    <p className="col-span-full text-[10px] text-slate-400 -mt-2">
+                      Use this phone and password to log in and view your live queue position anytime.
+                    </p>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Age</label>
                       <input

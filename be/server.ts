@@ -4,11 +4,13 @@ dotenv.config();
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import bcrypt from 'bcrypt';
 import {
   connectDb,
   hospitals,
   tickets,
   receptionists,
+  patients,
   counters,
   system,
 } from './db';
@@ -114,6 +116,66 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function normalizePhone(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+const ACTIVE_TICKET_STATUSES = ['Waiting', 'Urgent', 'Called'];
+
+async function findActiveTicketForPatient(patientId: string) {
+  const list = await tickets()
+    .find({ patientId, status: { $in: ACTIVE_TICKET_STATUSES } })
+    .toArray();
+  list.sort(
+    (a, b) =>
+      new Date(String(b.joinedAt)).getTime() - new Date(String(a.joinedAt)).getTime()
+  );
+  return list[0] || null;
+}
+
+function patientProfile(doc: { id: string; fullName: string; phone: string }) {
+  return { id: doc.id, fullName: doc.fullName, phone: doc.phone };
+}
+
+async function upsertPatientAccount(
+  fullName: string,
+  phone: string,
+  password: string
+): Promise<{ id: string; fullName: string; phone: string }> {
+  const phoneNormalized = normalizePhone(phone);
+  if (!phoneNormalized) throw new Error('Invalid phone number');
+  if (!password || password.length < 6) {
+    throw new Error('Password must be at least 6 characters');
+  }
+
+  const existing = await patients().findOne({ phoneNormalized });
+  if (existing) {
+    const match = await bcrypt.compare(password, existing.password as string);
+    if (!match) {
+      const err = new Error('This phone number is already registered. Please log in with your password.');
+      (err as Error & { status?: number }).status = 409;
+      throw err;
+    }
+    await patients().updateOne(
+      { id: existing.id },
+      { $set: { fullName, phone, updatedAt: new Date().toISOString() } }
+    );
+    return { id: existing.id as string, fullName, phone };
+  }
+
+  const id = `patient-${Date.now()}`;
+  const passwordHash = await bcrypt.hash(password, 10);
+  await patients().insertOne({
+    id,
+    fullName,
+    phone,
+    phoneNormalized,
+    password: passwordHash,
+    createdAt: new Date().toISOString(),
+  });
+  return { id, fullName, phone };
+}
+
 async function nextToken(hospitalId: string, prefix: string): Promise<string> {
   const result = await counters().findOneAndUpdate(
     { hospitalId },
@@ -183,7 +245,12 @@ app.get('/api/tickets', async (req, res) => {
     const { hospitalId } = req.query;
     const filter = hospitalId ? { hospitalId: String(hospitalId) } : {};
     const list = await tickets().find(filter).toArray();
-    (list as { status: string; joinedAt: string }[]).sort(sortTickets);
+    list.sort((a, b) =>
+      sortTickets(
+        { status: String(a.status), joinedAt: String(a.joinedAt) },
+        { status: String(b.status), joinedAt: String(b.joinedAt) }
+      )
+    );
     res.json(list);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -205,6 +272,7 @@ app.post('/api/tickets', async (req, res) => {
     const {
       fullName,
       phone,
+      password,
       age,
       gender,
       symptoms,
@@ -220,6 +288,29 @@ app.post('/api/tickets', async (req, res) => {
 
     if (!fullName || !phone || !hospitalId) {
       return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    let patientId: string | undefined;
+    if (password) {
+      try {
+        const patient = await upsertPatientAccount(fullName, phone, password);
+        patientId = patient.id;
+
+        const existingActive = await tickets().findOne({
+          patientId,
+          hospitalId,
+          status: { $in: ACTIVE_TICKET_STATUSES },
+        });
+        if (existingActive) {
+          return res.status(409).json({
+            error: 'You already have an active queue ticket at this hospital. Please log in to track it.',
+            activeTicketId: existingActive.id,
+          });
+        }
+      } catch (err: any) {
+        const status = err.status || 400;
+        return res.status(status).json({ error: err.message });
+      }
     }
 
     let prefix = 'W';
@@ -249,6 +340,7 @@ app.post('/api/tickets', async (req, res) => {
       documents,
     };
     if (medicalHistory) ticket.medicalHistory = medicalHistory;
+    if (patientId) ticket.patientId = patientId;
 
     await tickets().insertOne(ticket);
 
@@ -493,6 +585,42 @@ app.post('/api/receptionists/login', async (req, res) => {
   }
 });
 
+app.post('/api/patients/login', async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'Phone number and password required' });
+    }
+
+    const phoneNormalized = normalizePhone(phone);
+    if (!phoneNormalized) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
+
+    const patient = await patients().findOne({ phoneNormalized });
+    if (!patient) {
+      return res.status(401).json({ error: 'Invalid phone number or password' });
+    }
+
+    const match = await bcrypt.compare(password, patient.password as string);
+    if (!match) {
+      return res.status(401).json({ error: 'Invalid phone number or password' });
+    }
+
+    const activeTicket = await findActiveTicketForPatient(patient.id as string);
+    res.json({
+      ...patientProfile({
+        id: String(patient.id),
+        fullName: String(patient.fullName),
+        phone: String(patient.phone),
+      }),
+      activeTicket: activeTicket || null,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/uploads', async (req, res) => {
   try {
     const files = req.body.files as { name: string; type: string; data: string }[];
@@ -529,7 +657,9 @@ async function start() {
   await hospitals().createIndex({ id: 1 }, { unique: true });
   await tickets().createIndex({ id: 1 }, { unique: true });
   await tickets().createIndex({ hospitalId: 1 });
+  await tickets().createIndex({ patientId: 1 });
   await receptionists().createIndex({ username: 1 }, { unique: true });
+  await patients().createIndex({ phoneNormalized: 1 }, { unique: true });
   await counters().createIndex({ hospitalId: 1 }, { unique: true });
   await seedDatabase();
 

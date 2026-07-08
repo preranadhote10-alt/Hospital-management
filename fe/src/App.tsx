@@ -10,6 +10,8 @@ import {
   subscribeHospitals,
   createTicket,
   CreateTicketPayload,
+  getStoredPatient,
+  savePatientAfterRegistration,
 } from './services.ts';
 
 export default function App() {
@@ -18,6 +20,15 @@ export default function App() {
   const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Restore patient session (queue ticket) on load.
+  useEffect(() => {
+    const stored = getStoredPatient();
+    if (stored?.activeTicketId) {
+      setSelectedTicketId(stored.activeTicketId);
+      setView('status');
+    }
+  }, []);
 
   // Seed reference data (once) then subscribe to live hospital updates.
   useEffect(() => {
@@ -36,11 +47,34 @@ export default function App() {
   const handleRegisterPatient = async (registrationPayload: CreateTicketPayload) => {
     try {
       const newTicket = await createTicket(registrationPayload);
+      savePatientAfterRegistration(
+        {
+          id: newTicket.patientId,
+          fullName: registrationPayload.fullName,
+          phone: registrationPayload.phone,
+        },
+        newTicket.id
+      );
       setSelectedTicketId(newTicket.id);
       setView('status');
     } catch (error) {
       console.error('Error submitting patient registration:', error);
-      alert('Could not register you into the triage queue. Please try again.');
+      const message = error instanceof Error ? error.message : 'Registration failed.';
+      if (message.includes('already have an active queue ticket')) {
+        alert(message + ' Use "Track My Queue" on the home page to log in.');
+      } else if (message.includes('already registered')) {
+        alert(message);
+      } else {
+        alert('Could not register you into the triage queue. Please try again.');
+      }
+      throw error;
+    }
+  };
+
+  const handlePatientLoginSuccess = (ticketId: string | null) => {
+    if (ticketId) {
+      setSelectedTicketId(ticketId);
+      setView('status');
     }
   };
 
@@ -121,6 +155,7 @@ export default function App() {
               setSelectedTicketId(id);
               setView('status');
             }}
+            onPatientLoginSuccess={handlePatientLoginSuccess}
           />
         )}
 

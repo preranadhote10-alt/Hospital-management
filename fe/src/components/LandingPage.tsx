@@ -16,25 +16,34 @@ import {
   Bell, 
   User,
   Search,
-  Phone
+  Phone,
+  LogIn,
+  AlertCircle,
 } from 'lucide-react';
 import { Hospital } from '../types';
+import { loginPatient } from '../services';
 
 interface LandingPageProps {
   hospitals: Hospital[];
   onJoinQueue: (hospital: Hospital) => void;
   onNavigateToStaff: () => void;
   onNavigateToStatus: (ticketId: string) => void;
+  onPatientLoginSuccess: (ticketId: string | null) => void;
 }
 
 export default function LandingPage({ 
   hospitals, 
   onJoinQueue, 
   onNavigateToStaff,
-  onNavigateToStatus
+  onNavigateToStatus,
+  onPatientLoginSuccess,
 }: LandingPageProps) {
   const [specialtySearch, setSpecialtySearch] = useState('');
   const [locationSearch, setLocationSearch] = useState('');
+  const [loginPhone, setLoginPhone] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   // Handle specialty card clicks to auto-fill search
   const selectSpecialty = (name: string) => {
@@ -47,6 +56,30 @@ export default function LandingPage({
     const matchesLoc = h.address.toLowerCase().includes(locationSearch.toLowerCase());
     return matchesSpec && matchesLoc;
   });
+
+  const handlePatientLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginPhone.trim() || !loginPassword.trim()) {
+      setLoginError('Please enter your phone number and password.');
+      return;
+    }
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const session = await loginPatient(loginPhone, loginPassword);
+      if (session.activeTicketId) {
+        onNavigateToStatus(session.activeTicketId);
+        onPatientLoginSuccess(session.activeTicketId);
+      } else {
+        setLoginError('You are logged in but have no active queue ticket. Join a hospital to get a token.');
+        onPatientLoginSuccess(null);
+      }
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Login failed. Please try again.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f8fafc]">
@@ -130,6 +163,47 @@ export default function LandingPage({
                 <div className="w-8 h-8 rounded-full border-2 border-white bg-blue-50 flex items-center justify-center text-blue-700 font-bold text-[10px] shadow-sm">5k+</div>
               </div>
               <p className="text-xs text-slate-500 font-medium">Trusted by 5,000+ medical professionals daily</p>
+            </div>
+
+            {/* Patient login — track existing queue */}
+            <div className="bg-white p-5 rounded-xl shadow-md border border-slate-200 max-w-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <LogIn size={16} className="text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Track My Queue</h3>
+              </div>
+              <p className="text-[11px] text-slate-500 mb-4">
+                Already registered? Log in with your phone number and password to see your live waiting position.
+              </p>
+              {loginError && (
+                <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+              <form onSubmit={handlePatientLogin} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  type="tel"
+                  value={loginPhone}
+                  onChange={(e) => setLoginPhone(e.target.value)}
+                  placeholder="Phone number"
+                  className="h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
+                />
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Password"
+                  className="h-10 px-3 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none bg-slate-50 text-slate-800"
+                />
+                <button
+                  type="submit"
+                  disabled={loggingIn}
+                  className="sm:col-span-2 h-10 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <LogIn size={14} />
+                  {loggingIn ? 'Signing in...' : 'View My Queue Status'}
+                </button>
+              </form>
             </div>
           </div>
 

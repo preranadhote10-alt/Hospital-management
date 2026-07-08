@@ -24,6 +24,7 @@ import {
   updateTicketStatus,
   rescheduleTicket,
   queuePosition,
+  setPatientActiveTicket,
 } from '../services';
 
 interface LiveQueueDashboardProps {
@@ -47,7 +48,14 @@ export default function LiveQueueDashboard({ ticketId, onBackToHome }: LiveQueue
       (data) => {
         setTicket(data);
         if (!data) setError('Could not retrieve queue ticket details.');
-        else setError('');
+        else {
+          setError('');
+          if (data.status === 'Completed' || data.status === 'Cancelled') {
+            setPatientActiveTicket(null);
+          } else {
+            setPatientActiveTicket(data.id);
+          }
+        }
         setLoading(false);
       },
       (err) => {
@@ -71,6 +79,7 @@ export default function LiveQueueDashboard({ ticketId, onBackToHome }: LiveQueue
     if (!window.confirm('Are you sure you want to cancel your visit and release your queue token?')) return;
     try {
       await updateTicketStatus(ticketId, 'Cancelled');
+      setPatientActiveTicket(null);
       alert('Your clinic visit has been cancelled.');
       onBackToHome();
     } catch (err) {

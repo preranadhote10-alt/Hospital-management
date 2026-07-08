@@ -8,10 +8,13 @@ import {
   UploadedDoc,
   Receptionist,
   DashboardStats,
+  Patient,
+  PatientSession,
 } from './types';
 
 const POLL_MS = 3000;
 const SESSION_KEY = 'hospira-receptionist';
+const PATIENT_SESSION_KEY = 'hospira-patient';
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -98,6 +101,7 @@ export function subscribeHospitalTickets(
 export interface CreateTicketPayload {
   fullName: string;
   phone: string;
+  password?: string;
   age?: number | string;
   gender?: string;
   symptoms?: string;
@@ -190,6 +194,61 @@ export async function loginStaff(username: string, password: string): Promise<Re
 
 export async function logoutStaff(): Promise<void> {
   sessionStorage.removeItem(SESSION_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Patient auth (session stored in sessionStorage)
+// ---------------------------------------------------------------------------
+export function getStoredPatient(): PatientSession | null {
+  try {
+    const raw = sessionStorage.getItem(PATIENT_SESSION_KEY);
+    return raw ? (JSON.parse(raw) as PatientSession) : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePatientSession(patient: Patient, activeTicketId: string | null) {
+  const session: PatientSession = {
+    id: patient.id,
+    fullName: patient.fullName,
+    phone: patient.phone,
+    activeTicketId,
+  };
+  sessionStorage.setItem(PATIENT_SESSION_KEY, JSON.stringify(session));
+  return session;
+}
+
+export function setPatientActiveTicket(ticketId: string | null) {
+  const stored = getStoredPatient();
+  if (!stored) return;
+  savePatientSession(stored, ticketId);
+}
+
+export async function loginPatient(phone: string, password: string): Promise<PatientSession> {
+  const result = await api<Patient & { activeTicket: Ticket | null }>('/api/patients/login', {
+    method: 'POST',
+    body: JSON.stringify({ phone, password }),
+  });
+  return savePatientSession(result, result.activeTicket?.id ?? null);
+}
+
+export async function logoutPatient(): Promise<void> {
+  sessionStorage.removeItem(PATIENT_SESSION_KEY);
+}
+
+export function savePatientAfterRegistration(
+  patient: { id?: string; fullName: string; phone: string },
+  ticketId: string
+): PatientSession {
+  const session: PatientSession = {
+    id: patient.id || `patient-${ticketId}`,
+    fullName: patient.fullName,
+    phone: patient.phone,
+    activeTicketId: ticketId,
+  };
+  sessionStorage.setItem(PATIENT_SESSION_KEY, JSON.stringify(session));
+  return session;
 }
 
 // ---------------------------------------------------------------------------

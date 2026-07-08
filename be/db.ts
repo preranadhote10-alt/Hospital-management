@@ -28,6 +28,10 @@ export function receptionists(): Collection {
   return db.collection('receptionists');
 }
 
+export function patients(): Collection {
+  return db.collection('patients');
+}
+
 export function counters(): Collection {
   return db.collection('counters');
 }
